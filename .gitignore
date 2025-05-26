@@ -1,0 +1,30 @@
+# Ignore build output
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Ignore VS Code settings
+.vscode/
+
+# Ignore Office/Word temp files
+~$*
+*.tmp
+*.bak
+*.lock
+
+# Ignore Word generated files
+*.docx~
+
+# Ignore system files
+.DS_Store
+Thumbs.db
+
+# Ignore logs
+*.log
+
+# Ignore test/protected output
+test.protected.docx
+ProtectedTable.docx
