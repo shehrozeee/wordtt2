@@ -29,7 +29,7 @@ namespace WordTableCellLock
                 wordApp = CreateWordApp();
                 doc = OpenDocument(wordApp, inputPath);
                 LockExceptBookmarks(doc, new[] { "table1", "table2" }, password, anEditorID, missing, protect: false);
-                UnlockTextRange(doc, "Cat", anEditorID);
+                UnlockTextRange(doc, "[sgfs]", "[sgfe]", anEditorID);
                 ProtectDocument(doc, password, missing);
                 SaveDocument(doc, outputPath, missing);
             }
@@ -165,21 +165,32 @@ namespace WordTableCellLock
             Console.WriteLine("Document protected. All except specified bookmarks are editable.");
         }
 
-        static void UnlockTextRange(Word.Document doc, string text, object anEditorID)
+        static void UnlockTextRange(Word.Document doc, string startTag, string endTag, object anEditorID)
         {
-            Word.Range searchRange = doc.Content.Duplicate;
-            Word.Find find = searchRange.Find;
-            find.Text = text;
-            find.Forward = true;
-            find.Wrap = Word.WdFindWrap.wdFindStop;
-            if (find.Execute())
+            Word.Range contentRange = doc.Content.Duplicate;
+            string docText = contentRange.Text;
+            int searchStart = 0;
+            int unlockCount = 0;
+            while (true)
             {
-                searchRange.Editors.Add(ref anEditorID);
-                Console.WriteLine($"The text '{text}' was found and marked as editable, even if inside a locked region.");
+                int startIdx = docText.IndexOf(startTag, searchStart);
+                if (startIdx == -1) break;
+                int endIdx = docText.IndexOf(endTag, startIdx + startTag.Length);
+                if (endIdx == -1) break;
+                int rangeStart = contentRange.Start + startIdx + startTag.Length;
+                int rangeEnd = contentRange.Start + endIdx;
+                if (rangeEnd > rangeStart)
+                {
+                    Word.Range unlockRange = doc.Range(rangeStart, rangeEnd);
+                    unlockRange.Editors.Add(ref anEditorID);
+                    unlockCount++;
+                    Console.WriteLine($"Content between '{startTag}' and '{endTag}' (instance {unlockCount}) was marked as editable, even if inside a locked region.");
+                }
+                searchStart = endIdx + endTag.Length;
             }
-            else
+            if (unlockCount == 0)
             {
-                Console.WriteLine($"The text '{text}' was not found in the document.");
+                Console.WriteLine($"No content found between tags '{startTag}' and '{endTag}'.");
             }
         }
 
