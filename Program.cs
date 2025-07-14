@@ -1,5 +1,8 @@
-﻿using System;
+﻿using Microsoft.Office.Interop.Word;
+using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -11,7 +14,94 @@ namespace WordTableCellLock
     {
         static void Main(string[] args)
         {
-            TestLockingScenario();
+            //TestLockingScenario();
+            string jsonFilePath = Path.Combine(Environment.CurrentDirectory, "validation_lcms_table 2.json");
+            string documentPath = Path.Combine(Environment.CurrentDirectory, "UpdatedDocumentForHeader.docx");
+            UpdatePropertiesInWordDocument(documentPath, jsonFilePath);
+        }
+
+        public class ProjectProperty
+        {
+            public string Property { get; set; }
+            [JsonProperty("Text-Name")]
+            public string TextName { get; set; }
+        }   
+
+        public static List<ProjectProperty> LoadProjectProperties(string jsonFilePath)
+        {
+            if (!File.Exists(jsonFilePath))
+            {
+                throw new FileNotFoundException($"JSON file not found: {jsonFilePath}");
+            }
+
+            string jsonContent = File.ReadAllText(jsonFilePath);
+            return Newtonsoft.Json.JsonConvert.DeserializeObject<List<ProjectProperty>>(jsonContent);
+        }
+
+        public static void UpdatePropertiesInWordDocument(string DocumentPath, string jsonFilePath)
+        {
+            List<ProjectProperty> properties = LoadProjectProperties(jsonFilePath);
+            if (!File.Exists(DocumentPath))
+            {
+                throw new FileNotFoundException($"Word document not found: {DocumentPath}");
+            }
+
+            Word.Application wordApp = null;
+            Word.Document doc = null;
+            try
+            {
+                wordApp = new Word.Application();
+                wordApp.Visible = false;
+                doc = wordApp.Documents.Open(DocumentPath, ReadOnly: false, Visible: false);
+
+                foreach (var property in properties)
+                {
+                    ReplaceTextWithDocumentProperty(doc, property.Property, property.TextName, wordApp);
+                }
+                foreach (Word.Section section in doc.Sections)
+                {
+                    // Update header fields
+                    foreach (Word.HeaderFooter header in section.Headers)
+                    {
+                        foreach (Word.Field field in header.Range.Fields)
+                        {
+                            field.Update();
+                        }
+                    }
+                        
+                    // Update footer fields
+                    foreach (Word.HeaderFooter footer in section.Footers)
+                    {
+                        foreach (Word.Field field in footer.Range.Fields)
+                        {
+                            field.Update();
+                        }
+                    }
+                }
+                doc.Fields.Update();
+                //Save as a new document to avoid overwriting the original
+                string outputPath = Path.Combine(Environment.CurrentDirectory, "UpdatedDocument.docx");
+                SaveDocument(doc, outputPath, Missing.Value);
+
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Error: " + ex.Message);
+                Console.WriteLine(ex.StackTrace);
+            }
+            finally
+            {
+                if (doc != null)
+                {
+                    doc.Close(SaveChanges: true);
+                    Marshal.ReleaseComObject(doc);
+                }
+                if (wordApp != null)
+                {
+                    wordApp.Quit();
+                    Marshal.ReleaseComObject(wordApp);
+                }
+            }
         }
 
         static void TestLockingScenario()
@@ -28,6 +118,11 @@ namespace WordTableCellLock
             {
                 wordApp = CreateWordApp();
                 doc = OpenDocument(wordApp, inputPath);
+
+                // Example: Replace text with document properties
+                ReplaceTextWithDocumentProperty(doc, "CompanyName", "[COMPANY]" , wordApp);
+                ReplaceTextWithDocumentProperty(doc, "ProjectTitle", "[PROJECT]",wordApp);
+
                 LockExceptBookmarks(doc, new[] { "table1", "table2" }, password, anEditorID, missing, protect: false);
                 UnlockTextRange(doc, "[sgfs]", "[sgfe]", anEditorID);
                 ProtectDocument(doc, password, missing);
@@ -209,6 +304,117 @@ namespace WordTableCellLock
                     Console.WriteLine($"Bookmark '{name}' not found.");
                 }
             }
+        }
+
+        /// <summary>
+        /// Searches for all instances of specified text and replaces them with a document property field.
+        /// If the document property doesn't exist, it will be created with the property name as its value.
+        /// </summary>
+        /// <param name="doc">The Word document to modify</param>
+        /// <param name="propertyName">The name of the document property to create/use</param>
+        /// <param name="textToMatch">The text to search for and replace</param>
+        static void ReplaceTextWithDocumentProperty(Word.Document doc, string propertyName, string textToMatch,Word.Application wordApp)
+        {
+            try
+            {
+                object missing = Missing.Value;
+                
+                // Get custom document properties
+                dynamic customProperties = doc.CustomDocumentProperties;
+                // Check if property already exists (case-insensitive)
+                bool propertyExists = false;
+                string existingPropertyName = propertyName;
+                
+                // Iterate through existing properties
+                for (int i = 1; i <= customProperties.Count; i++)
+                {
+                    var prop = customProperties.Item(i);
+                    if (prop.Name.ToString().Equals(propertyName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        propertyExists = true;
+                        existingPropertyName = prop.Name.ToString();
+                        break;
+                    }
+                }
+                
+                // Add property if it doesn't exist
+                if (!propertyExists)
+                {
+                    customProperties.Add(propertyName, false, 4, propertyName); // 4 = msoPropertyTypeString
+                    Console.WriteLine($"Document property '{propertyName}' created with value '{propertyName}'");
+                }
+                else
+                {
+                    Console.WriteLine($"Document property '{existingPropertyName}' already exists");
+                }
+                int replacementCount = 0;
+
+                replacementCount = ReplaceInStoryRange(doc.Content, textToMatch, existingPropertyName, wordApp);
+                int numberOfSections = doc.Sections.Count;
+                foreach (Word.Section section in doc.Sections)
+                {
+                    Console.WriteLine($"Processing section {section.Index} of {numberOfSections}");
+                    int numberOfHeaders = section.Headers.Count;
+                    // Update header fields
+                    foreach (Word.HeaderFooter header in section.Headers)
+                    {
+                        Console.WriteLine($"Processing header {header.Index} of {numberOfHeaders} in section {section.Index}");
+                        ReplaceInStoryRange(header.Range, textToMatch, existingPropertyName, wordApp);
+                    }
+
+                    int numberOfFooters = section.Footers.Count;
+                    // Update footer fields
+                    foreach (Word.HeaderFooter footer in section.Footers)
+                    {
+                        Console.WriteLine($"Processing footer {footer.Index} of {numberOfFooters} in section {section.Index}");
+                        ReplaceInStoryRange(footer.Range, textToMatch, existingPropertyName, wordApp);
+                    }
+                }
+
+                if (replacementCount > 0)
+                {
+                    Console.WriteLine($"Replaced {replacementCount} instances of '{textToMatch}' with document property field '{existingPropertyName}'");
+                }
+                else
+                {
+                    Console.WriteLine($"No instances of '{textToMatch}' found in the document");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in ReplaceTextWithDocumentProperty: {ex.Message}");
+                Console.WriteLine(ex.StackTrace);
+            }
+        }
+
+        private static int ReplaceInStoryRange(Range storyRange, string searchText, string propertyName, Application wordApp)
+        {
+            int replacementCount = 0;
+            if (storyRange == null) return replacementCount;
+
+            Find findObject = storyRange.Find;
+            findObject.ClearFormatting();
+            findObject.Text = searchText;
+            findObject.Forward = true;
+            findObject.Wrap = WdFindWrap.wdFindStop;
+            Console.WriteLine($"Searching for '{searchText}' in story range...");
+            while (findObject.Execute())
+            {
+                Console.WriteLine($"Found '{searchText}' at position {storyRange.Start}");
+                storyRange.Select();
+                wordApp.Selection.Delete();
+
+                Field field = storyRange.Document.Fields.Add(wordApp.Selection.Range, WdFieldType.wdFieldDocProperty, propertyName);
+
+                // Reset the story range for next search
+                storyRange.Start = wordApp.Selection.Range.End;
+                findObject = storyRange.Find;
+                findObject.Text = searchText;
+                findObject.Forward = true;
+                findObject.Wrap = WdFindWrap.wdFindStop;
+                replacementCount++;
+            }
+            return replacementCount;
         }
     }
 }
