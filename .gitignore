@@ -28,3 +28,6 @@ Thumbs.db
 # Ignore test/protected output
 test.protected.docx
 ProtectedTable.docx
+validation_lcms_table 2.json
+Validation-PK-LCMS-Report Template_Draft.docx
+/.vs/wordtt2
